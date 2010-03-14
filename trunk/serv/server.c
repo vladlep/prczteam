@@ -9,6 +9,10 @@
 #include <string.h>
 #include <math.h>
 
+#include <sys/stat.h>
+#include <dirent.h>
+
+
 #include "netio.h"
 
 #define SERVER_PORT 50678
@@ -16,12 +20,12 @@
 #define TREE "tree.txt"
 #define HOMEDIR "/home/marius/Desktop/test/"
 
-void write_tree()
-{
-	
-}
+char homeDir[255];
 
-int main()
+void write_tree(char path[],int f_desc);
+
+
+int main(int argc, char *argv[])
 {
 
 	int sockfd, connfd;
@@ -31,8 +35,49 @@ int main()
 	char type[3],dim[12],len[5],name[1024];
 	int pid,nread,status;
 	
-	write_tree();
+	int f_desc;
+	struct stat st;
+//initializing tree
+// error checking
+	if(argc!=2)
+	 {
+	  printf("No path introduced");
+	  return -1;	
+	 }	
 
+	if(stat(argv[1],&st)!=0)
+	{
+		printf("Nu ati introdus o cale corecta\n");		
+		return -1;
+	}
+
+	if(!S_ISDIR(st.st_mode))		
+	{
+		printf("Nu ati introdus o cale de director\n");
+		return -1;
+	}
+	
+	strcpy(homeDir,argv[1]);
+	
+    if((f_desc=open("tree.txt",O_CREAT | O_TRUNC | O_WRONLY, 0644))==-1)
+	{
+		printf("\nCould not open file %s", argv[1]);
+       	return -1;
+   	}
+//end of error checking
+    
+	write_tree(argv[1],f_desc);
+	
+	
+	if(close(f_desc) < 0)
+    {
+       	printf("\nCould not close file %s\n", argv[1]);
+       	return -1;
+    }   			
+
+
+// end of initializing tree
+	
 	printf("\nMaking socket");
 	sockfd = socket(AF_INET,SOCK_STREAM, 0);
 	if(sockfd == -1)
@@ -107,7 +152,7 @@ int main()
 						snprintf(dim, 3, "%c%c", '1', '0');
 						int x = (int)log10((double)st_buf.st_size) + 1;
 						snprintf(&dim[2], 3, "%.2d", x);
-                                                snprintf(&dim[4], x+1, "%d", st_buf.st_size);
+                                                snprintf(&dim[4], x+1, "%d",(int) st_buf.st_size);
 						//printf("\n%s\n",dim);
                                                 stream_write(connfd, (void *)dim, strlen(dim));
 
@@ -188,3 +233,59 @@ int main()
 	}
 	exit(0);
 }
+
+
+void write_tree(char path[],int f_desc)
+{
+	DIR *d;
+	d=opendir(path);
+	struct dirent *aux;
+	struct stat buf;
+	
+	char sir[100],sir_aux[120],aux2[25];
+	int nr_pasi=0;
+
+	while((aux=readdir(d)))
+	{
+		
+		strcpy(sir,path);
+		strcat(sir,"/");
+		strcat(sir,aux->d_name);
+		stat(sir,&buf);
+		if(S_ISDIR(buf.st_mode) && strcmp(aux->d_name,".") && strcmp(aux->d_name,".."))
+		{
+			
+			strcpy(sir_aux,"d:");						//identificator de director
+			strcat(sir_aux,sir+strlen(homeDir)+1);  	// facem calea relativa
+			strcat(sir_aux,":");
+			snprintf(aux2,11,"%d",(int)buf.st_size);	// contine max 10 cifre numarul
+			strcat(sir_aux,aux2);
+			strcat(sir_aux,":");
+			snprintf(aux2,11,"%d",(int)buf.st_mtime); 	// contine max 10 cifre numarul
+			strcat(sir_aux,aux2);
+			strcat(sir_aux,"\n");
+			write(f_desc,(void *)sir_aux,strlen(sir_aux));
+			write_tree(sir,f_desc);
+		}
+	
+	if(S_ISREG(buf.st_mode))
+		{	
+			strcpy(sir_aux,"f:");					     //identificator de fisier
+			strcat(sir_aux,sir+strlen(homeDir)+1); 		 // facem calea relativa
+			strcat(sir_aux,":");
+			snprintf(aux2,11,"%d",(int)buf.st_size);	 //contine max 10 cifre numarul
+			strcat(sir_aux,aux2);
+			strcat(sir_aux,":");
+			snprintf(aux2,11,"%d",(int)buf.st_mtime);	 //contine max 10 cifre numarul
+			strcat(sir_aux,aux2);
+			strcat(sir_aux,"\n");
+
+
+			write(f_desc,(void *)sir_aux,strlen(sir_aux));
+
+		}
+	
+	}
+
+}
+
