@@ -65,27 +65,24 @@ int set_data(char buf[1024], char data[1017], int flag)
 	switch(flag)
 	{	
 		//ACK
-		case 0: for(i = 0; i < BUFSIZE - 1; i++)
-                                sprintf(&buf[i], "%c", '0');
+		case 0: sprintf(buf, "%c%c", '0', '0');
 			break;
 		//NACK
 		case 1: sprintf(buf, "%c%c", '0', '0');
-			for(i = 2; i < BUFSIZE - 1; i++)
-                                sprintf(&buf[i], "%c", '1');
 			break;
-		//MESSAGE
-		case 2: sprintf(buf, "%c%c", '0', '1');
-                        sprintf(&buf[2], "%.4d", strlen(data));
-                        sprintf(&buf[6], "%s", data);
-                        for(i = strlen(buf); i < BUFSIZE - 1; i++)
-                                sprintf(&buf[i], "%c", '0');
+		//FILENAME
+		case 2: snprintf(buf, 3, "%c%c", '0', '1');
+                        snprintf(&buf[2], 5, "%.4d", strlen(data));
+                        snprintf(&buf[6], strlen(data)+1, "%s", data);
                         break;
 		//DATA
-		case 3: sprintf(buf, "%c%c", '1', '0');
-			sprintf(&buf[2], "%.4d", strlen(data));
-			sprintf(&buf[6], "%s", data);
-			for(i = strlen(buf); i < BUFSIZE - 1; i++)
-				sprintf(&buf[i], "%c", '0');
+		case 3: //printf("\n%s\n",data);
+			snprintf(buf, 3, "%c%c", '1', '0');
+			//snprintf(&buf[2], 5, "%.4d", sizeof(data));
+			snprintf(&buf[2], strlen(data)+1, "%s", data);
+			break;
+		//SYNC COMPLETE
+		case 4: sprintf(buf, "%c%c", '1', '1');
 			break;
 		default: return -1;
 	}
