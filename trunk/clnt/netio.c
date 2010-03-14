@@ -57,7 +57,7 @@ int stream_write(int sockfd,void *buf,int len) {
 	return len - remaining;
 }
 
-int set_data(char buf[1024], char data[1017], int flag)
+int set_data(char buf[1024], char data[1018], int flag)
 {
 
 	int i;
@@ -74,18 +74,18 @@ int set_data(char buf[1024], char data[1017], int flag)
                                 sprintf(&buf[i], "%c", '1');
 			break;
 		//MESSAGE
-		case 2: sprintf(buf, "%c%c", '0', '1');
-                        sprintf(&buf[2], "%.4d", strlen(data));
-                        sprintf(&buf[6], "%s", data);
-                        for(i = strlen(buf); i < BUFSIZE - 1; i++)
-                                sprintf(&buf[i], "%c", '0');
+		case 2: snprintf(buf, 3, "%c%c", '0', '1');
+                        snprintf(&buf[2], 5, "%.4d", strlen(data));
+                        snprintf(&buf[6], strlen(data)+1, "%s", data);
+                        //for(i = strlen(buf); i < BUFSIZE - 1; i++)
+                        //        sprintf(&buf[i], "%c", '0');
                         break;
 		//DATA
-		case 3: sprintf(buf, "%c%c", '1', '0');
-			sprintf(&buf[2], "%.4d", strlen(data));
-			sprintf(&buf[6], "%s", data);
-			for(i = strlen(buf); i < BUFSIZE - 1; i++)
-				sprintf(&buf[i], "%c", '0');
+		case 3: snprintf(buf, 3, "%c%c", '1', '0');
+			snprintf(&buf[2], 5, "%.4d", strlen(data));
+			snprintf(&buf[6], strlen(data)+1, "%s", data);
+			//for(i = strlen(buf); i < BUFSIZE - 1; i++)
+			//	sprintf(&buf[i], "%c", '0');
 			break;
 		default: return -1;
 	}
