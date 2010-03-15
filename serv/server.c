@@ -8,76 +8,68 @@
 #include <fcntl.h>
 #include <string.h>
 #include <math.h>
-
-#include <sys/stat.h>
+#include <signal.h>
+#include <errno.h>
+#include <sys/wait.h>
 #include <dirent.h>
-
-
 #include "netio.h"
 
-#define SERVER_PORT 50678
+#define C_MSG_BEGIN "00"
+#define C_MSG_END "11"
+#define C_MSG_FILENAME "01"
+
+#define S_MSG_FILEDIMENSION "10"
+#define S_MSG_BUSY "01"
+
+#define DIMENSION_LENGTH 2
+#define FILENAME_LENGTH 4
+
+#define MAX_QUEUE 5
 #define BUFSIZE 1024
 #define TREE "tree.txt"
-#define HOMEDIR "/home/marius/Desktop/test/"
 
-char homeDir[255];
+int busy;
+char home_dir[1024];
+int sockfd;
+struct sockaddr_in rmt_addr;
+socklen_t rlen;
 
-void write_tree(char path[],int f_desc);
-
+void acceptConnections();
+void acceptMessages(int);
+int sendFile(int, char *, int);
+static void updateServerTree(int);
+int writeTree();
+void createTree(char[], int);
 
 int main(int argc, char *argv[])
 {
 
-	int sockfd, connfd;
-	struct sockaddr_in local_addr, rmt_addr;
-	socklen_t rlen;
-	char buf[BUFSIZE],data[1022];
-	char type[3],dim[12],len[5],name[1024];
-	int pid,nread,status;
+	struct sockaddr_in local_addr;
+	int server_port;
 	
-	int f_desc;
-	struct stat st;
-//initializing tree
-// error checking
-	if(argc!=2)
-	 {
-	  printf("No path introduced");
-	  return -1;	
-	 }	
-
-	if(stat(argv[1],&st)!=0)
+	if( argc == 2 )
 	{
-		printf("Nu ati introdus o cale corecta\n");		
+		getcwd(home_dir, sizeof(home_dir));
+		server_port = atoi(argv[1]);
+	} else
+	{
+		if( argc == 3)
+		{
+			strcpy(home_dir,argv[1]);
+			server_port = atoi(argv[2]);
+		} else
+		{
+			printf("\nSyntax: %s [dir] port\n", argv[0]);
+			return -1;
+		}
+	}
+
+	if( writeTree() == -1)
+	{
+		printf("\nAn error occurred while writing file-tree\n");
 		return -1;
 	}
 
-	if(!S_ISDIR(st.st_mode))		
-	{
-		printf("Nu ati introdus o cale de director\n");
-		return -1;
-	}
-	
-	strcpy(homeDir,argv[1]);
-	
-    if((f_desc=open("tree.txt",O_CREAT | O_TRUNC | O_WRONLY, 0644))==-1)
-	{
-		printf("\nCould not open file %s", argv[1]);
-       	return -1;
-   	}
-//end of error checking
-    
-	write_tree(argv[1],f_desc);
-	
-	
-	if(close(f_desc) < 0)
-    {
-       	printf("\nCould not close file %s\n", argv[1]);
-       	return -1;
-    }   			
-
-
-// end of initializing tree
-	
 	printf("\nMaking socket");
 	sockfd = socket(AF_INET,SOCK_STREAM, 0);
 	if(sockfd == -1)
@@ -86,7 +78,7 @@ int main(int argc, char *argv[])
 	        return -1;
 	}
 
-	if(set_addr(&local_addr, NULL, INADDR_ANY, SERVER_PORT) == -1)
+	if(set_addr(&local_addr, NULL, INADDR_ANY, server_port) == -1)
 	{
 		
 		printf("\nCould not fill address\n");
@@ -97,195 +89,329 @@ int main(int argc, char *argv[])
 	if( bind(sockfd, (struct sockaddr *) &local_addr, sizeof(local_addr)) == -1 )
 	{
 		printf("\nCould not bind to port\n");
-	    return -1;
+	    	return -1;
 	}
 	
-	if(listen(sockfd,5) == -1)
+	if(listen(sockfd, MAX_QUEUE) == -1)
 	{
 		printf("\nCould not listen\n");
-	    return -1;
+	    	return -1;
 	}
 	
 	rlen = sizeof(rmt_addr);
+
+	busy = 0;
+
+	acceptConnections();
+
+	exit(0);
+}
+
+int writeTree()
+{
+	int fd;
+	struct stat st_buf;
 	
-	while(1)
+	if(stat(home_dir,&st_buf) == -1)
+	{
+		printf("\nStat error for %s\n", home_dir);		
+		return -1;
+	}
+
+	if(!S_ISDIR(st_buf.st_mode))		
+	{
+		printf("\n%s is not a directory\n", home_dir);
+		return -1;
+	}
+	
+    	if( (fd = open(TREE, O_CREAT | O_TRUNC | O_WRONLY, 0644)) == -1 )
+	{
+		printf("\nCould not open file %s", TREE);
+       		return -1;
+   	}
+    
+	createTree(home_dir, fd);
+	
+	if( close(fd)  < 0 )
+    	{
+       		printf("\nCould not close file %s\n", TREE);
+       		return -1;
+    	}
+
+	return 0;
+}
+
+void createTree(char path[], int fd)
+{
+	DIR *wdir;
+	wdir = opendir(path);
+	
+	if(wdir == NULL)
+	{
+		printf("\nCould not open directory %s\n", path);
+		exit(1);
+	}
+
+	struct dirent *drnt;
+	struct stat st_buf;
+	
+	char new_path[1024],line[1024],aux[11];
+
+	while( (drnt = readdir(wdir)) != NULL)
+	{
+		strcpy(new_path, path);
+		strcat(new_path, "/");
+		strcat(new_path, drnt->d_name);
+
+		if( stat(new_path,&st_buf) == -1)
+		{
+			printf("\nStat error for %s\n", new_path);
+			exit(1);
+		} else
+		{
+			if( S_ISDIR(st_buf.st_mode) && strcmp(drnt->d_name,".") && strcmp(drnt->d_name,"..") )
+			{
+				strcpy(line, "d:");
+				strcat(line, new_path + strlen(home_dir) + 1);
+				strcat(line, ":");
+				snprintf(aux, 11, "%d", (int)st_buf.st_size);
+				strcat(line, aux);
+				strcat(line, ":");
+				snprintf(aux, 11, "%d", (int)st_buf.st_mtime);
+				strcat(line, aux);
+				strcat(line,"\n");
+				write(fd, (void *)line, strlen(line));
+			
+				createTree(new_path, fd);
+			}
+	
+			if( S_ISREG(st_buf.st_mode) )
+			{	
+				strcpy(line, "f:");
+				strcat(line, new_path + strlen(home_dir) + 1);
+				strcat(line, ":");
+				snprintf(aux, 11, "%d", (int)st_buf.st_size);
+				strcat(line, aux);
+				strcat(line, ":");
+				snprintf(aux, 11, "%d", (int)st_buf.st_mtime);
+				strcat(line,aux);
+				strcat(line,"\n");
+				write(fd, (void *)line, strlen(line));
+			}
+		}
+	}
+}
+
+void acceptConnections()
+{
+
+	int connfd;
+	int pid;
+	struct sigaction act;
+
+	printf("\nServer ONLINE\n");
+
+	sigemptyset(&act.sa_mask);
+	act.sa_handler = updateServerTree;
+	act.sa_flags = 0;
+	act.sa_flags |= SA_NODEFER;
+	sigaction(SIGINT, &act, NULL);
+	
+	while( 1 )
 	{
 		connfd = accept(sockfd, (struct sockaddr*)&rmt_addr, &rlen);
 		
 		pid = fork();
+
 		switch(pid)
 		{
 		case -1: printf("\nFork Error\n");
-				return -1;
-		case 0: close(sockfd);
-			int sw = 1;
-			chdir(HOMEDIR);
-			while(sw)
+			exit(1);
+		case 0: if( close(sockfd) == -1)
 			{
-				memset(type,'\0',3);
-				nread = stream_read(connfd, type, 2);
-				if( nread < 0 )
+				printf("\nCould not close socket %d\n", sockfd);
+				exit(1);
+			}
+
+			sigemptyset(&act.sa_mask);
+			act.sa_handler = SIG_IGN;
+			act.sa_flags = 0;
+			sigaction(SIGINT, &act, NULL);
+
+			acceptMessages(connfd);
+
+			exit(0);
+		default: if( close(connfd) == -1)
+			{
+				printf("\nCould not close socket %d\n", connfd);
+				exit(1);
+			}
+		}
+	}
+}
+
+void acceptMessages(int connfd)
+{
+
+	int sw = 1, nread;
+	char buf[BUFSIZE],name[1024],type[3],dim[12],len[3];
+
+	while(sw)
+	{
+		memset(type, '\0', sizeof(type));
+		nread = stream_read(connfd, type, sizeof(type) - 1);
+		if( nread < 0 )
+		{
+			printf("\nRead error from socket\n");
+			exit(1);
+		}
+		type[2] = '\0';
+		
+		if( strcmp(type, C_MSG_END) == 0 )
+		{
+			sw = 0;
+		} else
+		{
+			if( strcmp(type, C_MSG_BEGIN) == 0)
+			{
+				if( !busy )
 				{
-					printf("\nRead error from socket\n");
-					exit(1);
-				}
-				type[2] = '\0';
-				//printf("\n%s\n",type);
-				if( strcmp(type,"11") == 0 )
-				{
-					sw = 0;
-				} else
-				{
-					if( strcmp(type,"00") == 0 )
+					struct stat st_buf;
+
+					if( stat(TREE, &st_buf) == -1)
 					{
-						int fd;
-						struct stat st_buf;
-						fd = open(TREE,O_RDONLY);
+						printf("\nStat error for %s\n", TREE);
+						exit(1);
+					}
 
-						if(fd == -1)
-						{
-							printf("\n1Could not open file %s", TREE);
-							exit(2);
-						}
+					snprintf(dim, strlen(S_MSG_FILEDIMENSION) + 1, "%s", S_MSG_FILEDIMENSION);
+					int x = (int)log10((double)st_buf.st_size) + 1;
+					snprintf(&dim[strlen(S_MSG_FILEDIMENSION)], DIMENSION_LENGTH + 1, "%.2d", x);
+                                	snprintf(&dim[strlen(S_MSG_FILEDIMENSION) + DIMENSION_LENGTH], x+1, "%d", st_buf.st_size);
+				
+                                	stream_write(connfd, (void *)dim, strlen(dim));
 
-						fstat(fd, &st_buf);
-						snprintf(dim, 3, "%c%c", '1', '0');
-						int x = (int)log10((double)st_buf.st_size) + 1;
-						snprintf(&dim[2], 3, "%.2d", x);
-                                                snprintf(&dim[4], x+1, "%d",(int) st_buf.st_size);
-						//printf("\n%s\n",dim);
-                                                stream_write(connfd, (void *)dim, strlen(dim));
-
-						while( 0 < (nread = read(fd, (void *)buf, 1024)))
-						{
-							//printf("\n%d - %s\n",nread,buf);
-							stream_write(connfd, (void *)buf, nread);
-						}
-						if( nread < 0 )
-		                                {
-                		                        printf("\nRead error from file %s\n", TREE);
-                                		        exit(3);
-                                		}
-						if(close(fd) < 0)
-						{
-							printf("\nCould not close file %s\n", TREE);
-							exit(2);
-						}
-
-					} else
+					if( sendFile(connfd, TREE, O_RDONLY) == -1)
 					{
-						if( strcmp(type,"01") == 0 )
-						{
-							memset(len, '\0', 5);
-							nread = stream_read(connfd, len, 4);
-							if( nread < 0 )
-	                                                {
-                        	                                printf("\nRead error from socket\n");
-        	                                                exit(1);
-                	                                }
-							len[4] = '\0';
-							memset(name, '\0', 1024);
-							nread = stream_read(connfd, name, atoi(len));
-							if( nread < 0 )
-	                                                {
-        	                                                printf("\nRead error from socket\n");
-                	                                        exit(1);
-                        	                        }
-							name[atoi(len)] = '\0';
-							//printf("\n%s\n",name);	
-							int fd;
-							fd = open(name,O_RDONLY);
-
-	                                                if(fd == -1)
-        	                                        {
-                	                                        printf("\nCould not open file %s", name);
-                        	                                exit(2);
-                                	                }
-							while( 0 < (nread = read(fd, (void *)buf, 1024)))
-                                                	{
-                                                        	stream_write(connfd, (void *)buf, nread);
-                                                	}
-                                                	if( nread < 0 )
-                                                	{
-                                                        	printf("\nRead error from file %s\n", name);
-                                                        	exit(3);
-                                                	}
-							if(close(fd) < 0)
-							{
-								printf("\nCould not close file %s\n", name);
-                                                        	exit(2);
-							}
-
-
-						} else
-						{
-							printf("\nUnrecognized message\n");
-							exit(4);
-						}
+						printf("\nAn error occurred while sending file %s\n", TREE);
+						exit(1);
 					}
 				}
+				else
+				{
+					memset(buf, '\0', BUFSIZE);
+					snprintf(buf, strlen(S_MSG_BUSY) + 1, "%s", S_MSG_BUSY);
+					stream_write(connfd, (void *)buf, strlen(S_MSG_BUSY));
+				}
+			} else
+			{
+				if( strcmp(type, C_MSG_FILENAME) == 0 )
+				{
+					chdir(home_dir);
+					
+					memset(len, '\0', FILENAME_LENGTH + 1);
+					nread = stream_read(connfd, len, FILENAME_LENGTH);
+					if( nread < 0 )
+	                                {
+                        	        	printf("\nRead error from socket\n");
+        	                                exit(1);
+                	                }
+					len[FILENAME_LENGTH] = '\0';
+
+					memset(name, '\0', 1024);
+					nread = stream_read(connfd, name, atoi(len));
+					if( nread < 0 )
+	                                {
+        	                        	printf("\nRead error from socket\n");
+                	                        exit(1);
+                        	        }
+					name[atoi(len)] = '\0';
+
+					if( sendFile(connfd, name, O_RDONLY) == -1)
+					{
+						printf("\nAn error occurred while sending file %s\n", name);
+						exit(1);
+					}	
+				} else
+				{
+					printf("\nUnrecognized message\n");
+					exit(1);
+				}
 			}
-			
-			exit(0);
-		default: wait(&status); 
-			close(connfd);
 		}
 	}
-	exit(0);
 }
 
-
-void write_tree(char path[],int f_desc)
+int sendFile(int connfd, char *name, int mask)
 {
-	DIR *d;
-	d=opendir(path);
-	struct dirent *aux;
-	struct stat buf;
-	
-	char sir[100],sir_aux[120],aux2[25];
-	int nr_pasi=0;
 
-	while((aux=readdir(d)))
+	int fd, nread;
+	char buf[BUFSIZE];
+
+	fd = open(name, mask);
+
+	if(fd == -1)
 	{
-		
-		strcpy(sir,path);
-		strcat(sir,"/");
-		strcat(sir,aux->d_name);
-		stat(sir,&buf);
-		if(S_ISDIR(buf.st_mode) && strcmp(aux->d_name,".") && strcmp(aux->d_name,".."))
-		{
-			
-			strcpy(sir_aux,"d:");						//identificator de director
-			strcat(sir_aux,sir+strlen(homeDir)+1);  	// facem calea relativa
-			strcat(sir_aux,":");
-			snprintf(aux2,11,"%d",(int)buf.st_size);	// contine max 10 cifre numarul
-			strcat(sir_aux,aux2);
-			strcat(sir_aux,":");
-			snprintf(aux2,11,"%d",(int)buf.st_mtime); 	// contine max 10 cifre numarul
-			strcat(sir_aux,aux2);
-			strcat(sir_aux,"\n");
-			write(f_desc,(void *)sir_aux,strlen(sir_aux));
-			write_tree(sir,f_desc);
-		}
+		printf("\nCould not open file %s", name);
+		return -1;
+	}
 	
-	if(S_ISREG(buf.st_mode))
-		{	
-			strcpy(sir_aux,"f:");					     //identificator de fisier
-			strcat(sir_aux,sir+strlen(homeDir)+1); 		 // facem calea relativa
-			strcat(sir_aux,":");
-			snprintf(aux2,11,"%d",(int)buf.st_size);	 //contine max 10 cifre numarul
-			strcat(sir_aux,aux2);
-			strcat(sir_aux,":");
-			snprintf(aux2,11,"%d",(int)buf.st_mtime);	 //contine max 10 cifre numarul
-			strcat(sir_aux,aux2);
-			strcat(sir_aux,"\n");
-
-
-			write(f_desc,(void *)sir_aux,strlen(sir_aux));
-
-		}
-	
+	while( 0 < (nread = read(fd, (void *)buf, BUFSIZE)))
+	{
+		stream_write(connfd, (void *)buf, nread);
 	}
 
+	if( nread < 0 )
+	{
+        	printf("\nRead error from file %s\n", name);
+                return -1;
+       	}
+
+	if(close(fd) < 0)
+	{
+		printf("\nCould not close file %s\n", name);
+		return -1;
+	}
 }
 
+static void updateServerTree(int sig)
+{
+
+	pid_t done;
+	int status;
+
+	printf("\nWaiting for clients to end connections\n");
+
+	busy = 1;
+
+	while(1)
+	{
+		done = wait(&status);
+		if( done == -1)
+		{
+			if( errno == ECHILD )
+				break;
+		} else
+		{
+			if( !WIFEXITED(status) || (WEXITSTATUS(status) != 0) )
+			{
+				printf("\nProcess with pid %d failed\n", done);
+				exit(1);
+			}
+		}
+	}
+
+	printf("\nAll connections ended\n");
+
+	if( writeTree() == -1)
+	{
+		printf("\nAn error occurred while writing file-tree\n");
+		exit(1);
+	}
+
+	printf("\nUpdate complete\n");
+
+	busy = 0;
+
+	acceptConnections();
+}
