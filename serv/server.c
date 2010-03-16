@@ -19,11 +19,11 @@
 #include "netio.h"
 
 #define C_MSG_BEGIN "00"
-#define C_MSG_END "11"
-#define C_MSG_FILENAME "01"
+#define C_MSG_END "01"
+#define C_MSG_FILENAME "02"
 
-#define S_MSG_FILEDIMENSION "10"
-#define S_MSG_BUSY "01"
+#define S_MSG_FILEDIMENSION "03"
+#define S_MSG_BUSY "04"
 
 #define DIMENSION_LENGTH 2
 #define FILENAME_LENGTH 4

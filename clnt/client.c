@@ -17,11 +17,11 @@
 #include "netio.h"
 
 #define C_MSG_BEGIN "00"
-#define C_MSG_END "11"
-#define C_MSG_FILENAME "01"
+#define C_MSG_END "01"
+#define C_MSG_FILENAME "02"
 
-#define S_MSG_FILEDIMENSION "10"
-#define S_MSG_BUSY "01"
+#define S_MSG_FILEDIMENSION "03"
+#define S_MSG_BUSY "04"
 
 #define FILENAME_LENGTH 4
 
@@ -29,7 +29,8 @@
 #define TREE "tree.txt"
 
 
-struct nod *first = NULL, *last = NULL;
+file_entry *first = NULL;
+file_entry *last = NULL;
 char home_dir[1024];
 
 
@@ -248,7 +249,7 @@ int update(int sockfd)
 	{
 		int i = 0;
 		char *str[4];
-        	char *aux = (char*)malloc(strlen(line)*sizeof(char));
+        	char *aux = (char*)malloc(strlen(line)*sizeof(char) + 1);
 
         	strcpy(aux,line);
         	do
@@ -261,7 +262,7 @@ int update(int sockfd)
 		strcpy(name,str[1]);
 		size = atoi(str[2]);
 		time = atoi(str[3]);
-		
+
 		filelistAdd(name);
 
 		if( stat(name,&st_buf) == -1)
@@ -469,35 +470,30 @@ int removeOldFiles(char path[])
 	return 0;
 }
 
-void filelistAdd(char name[1024])
+void filelistAdd(char *name)
 {
-	struct nod *new = (struct nod*)malloc(sizeof(struct nod));
-	strcpy(new->name, name);
-	new->next = NULL;
-	if(first == NULL)
+	file_entry *new_entry;
+
+	new_entry  = (file_entry *)malloc(sizeof(file_entry));
+	new_entry->name = (char *)malloc(strlen(name)*sizeof(char) + 1);
+	strcpy(new_entry->name, name);
+	new_entry->next = NULL;
+	if(last == NULL)
 	{
-		first = new;
-		last = new;
+		first = new_entry;
 	} else
 	{
-		if(first == last)
-		{
-			last = new;
-			first->next = last;
-		} else
-		{
-			last->next = new;
-			last = new;
-		}
+		last->next = new_entry;
 	}
+	last = new_entry;
 }
 
 int filelistContains(char *name)
 {
-	struct nod *p;
-	for(p = first; p != NULL; p = p->next)
+	file_entry *curr;
+	for(curr = first; curr != NULL; curr = curr->next)
 	{
-		if(strcmp(p->name,name) == 0)
+		if(strcmp(curr->name,name) == 0)
 			return 1;
 	}
 	return 0;

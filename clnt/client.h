@@ -3,21 +3,23 @@
 
 struct nod
 {
-	char name[1024];
+	char *name;
 	struct nod *next;
 };
+
+typedef struct nod file_entry;
 
 int startConnection(char*, int);
 
 int readTree(int);
 
-int removeOldFiles();
+int removeOldFiles(char []);
 
 int update(int);
 
 int receiveFile(int, char*, int, int);
 
-void filelistAdd(char[]);
+void filelistAdd(char *);
 
 int filelistContains(char *);
 
