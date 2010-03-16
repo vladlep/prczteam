@@ -190,12 +190,41 @@ void createTree(char path[], int fd)
 		if( stat(new_path,&st_buf) == -1)
 		{
 			printf("\nStat error for %s\n", new_path);
+			if(close(fd) == -1)
+			{
+				printf("\nCould not close file %s\n", TREE);
+				if( closedir(wdir) == -1 )
+				{
+					printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+					exit(1);
+				}
+				exit(1);
+			}
+			if( closedir(wdir) == -1 )
+			{
+				printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+				if(close(fd) == -1)
+				{
+					printf("\nCould not close file %s\n", TREE);
+					exit(1);
+				}
+				exit(1);
+			}
 			exit(1);
 		} else
 		{
-			if( S_ISDIR(st_buf.st_mode) && strcmp(drnt->d_name,".") && strcmp(drnt->d_name,"..") )
+			if( strcmp(drnt->d_name,".") && strcmp(drnt->d_name,"..") )
 			{
-				strcpy(line, "d:");
+				if( S_ISDIR(st_buf.st_mode) )
+				{
+					strcpy(line, "d:");
+				}
+
+				if( S_ISREG(st_buf.st_mode) )
+				{	
+					strcpy(line, "f:");
+				}
+
 				strcat(line, new_path + strlen(home_dir) + 1);
 				strcat(line, ":");
 				snprintf(aux, 11, "%d", (int)st_buf.st_size);
@@ -204,25 +233,50 @@ void createTree(char path[], int fd)
 				snprintf(aux, 11, "%d", (int)st_buf.st_mtime);
 				strcat(line, aux);
 				strcat(line,"\n");
-				write(fd, (void *)line, strlen(line));
-			
-				createTree(new_path, fd);
-			}
-	
-			if( S_ISREG(st_buf.st_mode) )
-			{	
-				strcpy(line, "f:");
-				strcat(line, new_path + strlen(home_dir) + 1);
-				strcat(line, ":");
-				snprintf(aux, 11, "%d", (int)st_buf.st_size);
-				strcat(line, aux);
-				strcat(line, ":");
-				snprintf(aux, 11, "%d", (int)st_buf.st_mtime);
-				strcat(line,aux);
-				strcat(line,"\n");
-				write(fd, (void *)line, strlen(line));
+
+				if( write(fd, (void *)line, strlen(line)) == -1)
+				{
+					printf("\nError writing to file %s\n", TREE);
+					if(close(fd) == -1)
+					{
+						printf("\nCould not close file %s\n", TREE);
+						if( closedir(wdir) == -1 )
+						{
+							printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+							exit(1);
+						}
+						exit(1);
+					}	
+					if( closedir(wdir) == -1 )
+					{
+						printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+						if(close(fd) == -1)
+						{
+							printf("\nCould not close file %s\n", TREE);
+							exit(1);
+						}
+						exit(1);
+					}
+					exit(1);
+				}
+
+				if( S_ISDIR(st_buf.st_mode) )
+				{	
+					createTree(new_path, fd);
+				}
 			}
 		}
+	}
+
+	if( closedir(wdir) == -1 )
+	{
+		printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+		if(close(fd) == -1)
+		{
+			printf("\nCould not close file %s\n", TREE);
+			exit(1);
+		}
+		exit(1);
 	}
 }
 
@@ -406,6 +460,11 @@ int sendFile(int connfd, char *name, int mask)
 	if( nread < 0 )
 	{
         	printf("\nRead error from file %s\n", name);
+		if(close(fd) < 0)
+		{
+			printf("\nCould not close file %s\n", name);
+			return -1;
+		}
                 return -1;
        	}
 
