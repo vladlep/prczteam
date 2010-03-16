@@ -6,8 +6,9 @@
 #include <netinet/in.h>
 
 int set_addr(struct sockaddr_in *, char *, u_int32_t, short);
+
 int stream_read(int, void *, int);
+
 int stream_write(int, void *, int);
-int set_data(char[], char[], int);
 
 #endif

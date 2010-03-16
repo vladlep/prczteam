@@ -12,6 +12,10 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <dirent.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+
+#include "server.h"
 #include "netio.h"
 
 #define C_MSG_BEGIN "00"
@@ -24,22 +28,19 @@
 #define DIMENSION_LENGTH 2
 #define FILENAME_LENGTH 4
 
+#define SHMKEY 0x100
 #define MAX_QUEUE 5
 #define BUFSIZE 1024
 #define TREE "tree.txt"
 
-int busy;
+
+int *p_busy;
+int *c_busy;
 char home_dir[1024];
 int sockfd;
 struct sockaddr_in rmt_addr;
 socklen_t rlen;
 
-void acceptConnections();
-void acceptMessages(int);
-int sendFile(int, char *, int);
-static void updateServerTree(int);
-int writeTree();
-void createTree(char[], int);
 
 int main(int argc, char *argv[])
 {
@@ -47,28 +48,55 @@ int main(int argc, char *argv[])
 	struct sockaddr_in local_addr;
 	int server_port;
 	
-	if( argc == 2 )
+	if( argc == 3)
 	{
-		getcwd(home_dir, sizeof(home_dir));
-		server_port = atoi(argv[1]);
+		strcpy(home_dir,argv[1]);
+		server_port = atoi(argv[2]);
 	} else
 	{
-		if( argc == 3)
-		{
-			strcpy(home_dir,argv[1]);
-			server_port = atoi(argv[2]);
-		} else
-		{
-			printf("\nSyntax: %s [dir] port\n", argv[0]);
-			return -1;
-		}
+		printf("\nSyntax: %s dir port\n", argv[0]);
+		return -1;
 	}
+	
+	int shmid;
+	key_t key;
+	int *shm;
+	key = (key_t) SHMKEY;
+
+	if( (shmid = shmget(key, sizeof(int), IPC_CREAT | 0666)) < 0)
+	{
+        	printf("\nAn error occurred while creating the shared memory segment\n");
+        	return -1;
+    	}
+
+	if( (shm = shmat(shmid, NULL, 0)) == (int *) -1)
+	{
+        	printf("\nAn error occurred while attaching the shared memory segment\n");
+        	return -1;
+	}
+	p_busy = shm;
+	*p_busy = 0;	
 
 	if( writeTree() == -1)
 	{
 		printf("\nAn error occurred while writing file-tree\n");
 		return -1;
 	}
+
+	if( startServer(server_port) == -1 )
+	{
+		printf("\nAn error occurred while starting server\n");
+		return -1;
+	}
+
+	acceptConnections();
+
+	exit(0);
+}
+
+int startServer(int server_port)
+{
+	struct sockaddr_in local_addr;
 
 	printf("\nMaking socket");
 	sockfd = socket(AF_INET,SOCK_STREAM, 0);
@@ -100,11 +128,7 @@ int main(int argc, char *argv[])
 	
 	rlen = sizeof(rmt_addr);
 
-	busy = 0;
-
-	acceptConnections();
-
-	exit(0);
+	return 0;
 }
 
 int writeTree()
@@ -227,17 +251,35 @@ void acceptConnections()
 		{
 		case -1: printf("\nFork Error\n");
 			exit(1);
-		case 0: if( close(sockfd) == -1)
-			{
-				printf("\nCould not close socket %d\n", sockfd);
-				exit(1);
-			}
-
-			sigemptyset(&act.sa_mask);
+		case 0: sigemptyset(&act.sa_mask);
 			act.sa_handler = SIG_IGN;
 			act.sa_flags = 0;
 			sigaction(SIGINT, &act, NULL);
 
+			if( close(sockfd) == -1)
+			{
+				printf("\nCould not close socket %d\n", sockfd);
+				exit(1);
+			}
+			
+			int shmid;
+			key_t key;
+			int *shm;
+			key = (key_t) SHMKEY;
+
+			if( (shmid = shmget(key, sizeof(int), 0666)) < 0)
+			{
+        			printf("\nAn error occurred while locating the shared memory segment\n");
+        			exit(1);
+			}
+
+			if( (shm = shmat(shmid, NULL, 0)) == (int *) -1)
+			{
+        			printf("\nAn error occurred while attaching the shared memory segment\n");
+        			exit(1);
+			}
+			c_busy = shm;
+			
 			acceptMessages(connfd);
 
 			exit(0);
@@ -274,7 +316,7 @@ void acceptMessages(int connfd)
 		{
 			if( strcmp(type, C_MSG_BEGIN) == 0)
 			{
-				if( !busy )
+				if( *c_busy == 0 )
 				{
 					struct stat st_buf;
 
@@ -382,7 +424,7 @@ static void updateServerTree(int sig)
 
 	printf("\nWaiting for clients to end connections\n");
 
-	busy = 1;
+	*p_busy = 1;
 
 	while(1)
 	{
@@ -396,7 +438,6 @@ static void updateServerTree(int sig)
 			if( !WIFEXITED(status) || (WEXITSTATUS(status) != 0) )
 			{
 				printf("\nProcess with pid %d failed\n", done);
-				exit(1);
 			}
 		}
 	}
@@ -411,7 +452,7 @@ static void updateServerTree(int sig)
 
 	printf("\nUpdate complete\n");
 
-	busy = 0;
+	*p_busy = 0;
 
 	acceptConnections();
 }
