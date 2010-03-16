@@ -10,6 +10,10 @@
 #include <string.h>
 #include <utime.h>
 #include <errno.h>
+#include <sys/wait.h>
+#include <dirent.h>
+
+#include "client.h"
 #include "netio.h"
 
 #define C_MSG_BEGIN "00"
@@ -24,19 +28,15 @@
 #define BUFSIZE 1024
 #define TREE "tree.txt"
 
+
+struct nod *first = NULL, *last = NULL;
 char home_dir[1024];
 
-int readTree(int);
-int removeOldFiles();
-int update(int);
-int receiveFile(int, char*, int, int);
 
+int main(int argc, char *argv[])
+{
 
-int main(int argc, char *argv[]) {
-  
-	int sockfd;
-	struct sockaddr_in local_addr,remote_addr;
-	char server_address[15];
+	char server_address[255];
 	int server_port;
 
 	if( argc == 2 )
@@ -66,6 +66,20 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	
+	if( startConnection(server_address, server_port) == -1)
+	{
+		printf("\nAn error occured during connection\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+int startConnection(char *server_address, int server_port)
+{
+	int sockfd;
+	struct sockaddr_in local_addr, remote_addr;
+
 	printf("\nMaking a socket");
 	sockfd = socket(AF_INET,SOCK_STREAM, 0);
 	if(sockfd == -1)
@@ -107,11 +121,16 @@ int main(int argc, char *argv[]) {
 		printf("\nCould not change directory to %s\n", home_dir);
 		return -1;
 	}
-
-	if( readTree(sockfd) == -1 )
+	
+	switch( readTree(sockfd) )
 	{
-		printf("\nAn error occurred while trying to receive the file-tree\n");
-		return -1;
+		case 0: break;
+		case -1: printf("\nAn error occurred while trying to receive the file-tree\n");
+			return -1;
+		case 1: printf("\nRetrying in 10 seconds\n");
+			sleep(10);
+			startConnection(server_address, server_port);
+			break;
 	}
 
 	printf("\nStarting update\n");
@@ -127,7 +146,7 @@ int main(int argc, char *argv[]) {
 		return -1;
 	}
 
-	if ( removeOldFiles() == -1)
+	if ( removeOldFiles(home_dir) == -1)
 	{
 		printf("\nAn error occurred while removing old files\n");
 		return -1;
@@ -146,7 +165,7 @@ int readTree(int sockfd)
 	memset(buf, '\0', BUFSIZE);
 	snprintf(buf, strlen(C_MSG_BEGIN) + 1, "%s", C_MSG_BEGIN);
 	stream_write(sockfd, (void *)buf, strlen(C_MSG_BEGIN));
-	
+
 	memset(type, '\0', sizeof(type));
 	nread = stream_read(sockfd, (void *)type, sizeof(type)-1);
 
@@ -194,8 +213,13 @@ int readTree(int sockfd)
 	{
 		if( strcmp(type, S_MSG_BUSY) == 0)
 		{
-			sleep(60);
-			return readTree(sockfd);
+			printf("\nServer is busy\n");
+
+			memset(buf, '\0', BUFSIZE);
+        		snprintf(buf, strlen(C_MSG_END) + 1, "%s", C_MSG_END);
+        		stream_write(sockfd, (void *)buf, strlen(C_MSG_END));
+
+			return 1;
 		} else
 		{
 			printf("\nUnrecognized message\n");
@@ -237,6 +261,8 @@ int update(int sockfd)
 		strcpy(name,str[1]);
 		size = atoi(str[2]);
 		time = atoi(str[3]);
+		
+		filelistAdd(name);
 
 		if( stat(name,&st_buf) == -1)
 		{
@@ -285,7 +311,7 @@ int update(int sockfd)
 			if( (type == 'f') && ((st_buf.st_size != size) || (st_buf.st_mtime != time)) )
 			{
 				memset(buf, '\0', BUFSIZE);
-                                snprintf(buf, strlen(C_MSG_FILENAME), "%s", C_MSG_FILENAME);
+                                snprintf(buf, strlen(C_MSG_FILENAME) + 1, "%s", C_MSG_FILENAME);
                                 snprintf(&buf[strlen(C_MSG_FILENAME)], FILENAME_LENGTH + 1, "%.4d", strlen(name));
 				snprintf(&buf[FILENAME_LENGTH + strlen(C_MSG_FILENAME)], strlen(name) + 1, "%s", name);
                                 stream_write(sockfd, (void *)buf, strlen(buf));
@@ -308,7 +334,7 @@ int update(int sockfd)
 			}
 		}
 	} 
-
+	
 	memset(buf, '\0', BUFSIZE);
 	snprintf(buf, strlen(C_MSG_END) + 1, "%s", C_MSG_END);
 	stream_write(sockfd, (void *)buf, strlen(C_MSG_END));
@@ -368,8 +394,111 @@ int receiveFile(int sockfd, char *name, int size, int mask)
 	return 0;
 }
 
-int removeOldFiles()
+int removeOldFiles(char path[])
 {
+	int status;
+	DIR *wdir;
+	wdir = opendir(path);
 
+	if(wdir == NULL)
+	{
+		printf("\nCould not open directory %s\n", path);
+		return -1;
+	}
+
+	struct dirent *drnt;
+	struct stat st_buf;
+	
+	char new_path[1024],name[1024];
+	
+	while( (drnt = readdir(wdir)) != NULL)
+	{
+		
+		strcpy(new_path, path);
+		strcat(new_path, "/");
+		strcat(new_path, drnt->d_name);
+		if( stat(new_path,&st_buf) == -1)
+		{
+			printf("\nStat error for %s\n", new_path);
+			return -1;
+		} else
+		{
+			strcpy(name, new_path + strlen(home_dir) + 1);
+			if( S_ISDIR(st_buf.st_mode) && strcmp(drnt->d_name,".") && strcmp(drnt->d_name,"..") )
+			{	
+				if( filelistContains(name) )
+				{	
+					removeOldFiles(new_path);
+				} else
+				{
+					int pidd;
+					pidd = vfork();
+					switch(pidd)
+					{
+					case -1: printf("\nFork Error\n");
+						return -1;
+					case 0: execlp("rm", "remove", "-r", new_path, (char*)0);
+						exit(0);
+					default: wait(&status);
+						printf("\nRemoved directory %s\n", name);
+					}
+				}
+			}
+	
+			if( S_ISREG(st_buf.st_mode) )
+			{	
+				if( !filelistContains(name) )
+				{
+					int pidf;
+					pidf= vfork();
+					switch(pidf)
+					{
+					case -1: printf("\nFork Error\n");
+						return -1;
+					case 0: execlp("rm", "remove", new_path, (char*)0);
+						exit(0);
+					default: wait(&status);
+						if(strcmp(name, TREE))
+							printf("\nRemoved file %s\n", name);
+					}
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
+void filelistAdd(char name[1024])
+{
+	struct nod *new = (struct nod*)malloc(sizeof(struct nod));
+	strcpy(new->name, name);
+	new->next = NULL;
+	if(first == NULL)
+	{
+		first = new;
+		last = new;
+	} else
+	{
+		if(first == last)
+		{
+			last = new;
+			first->next = last;
+		} else
+		{
+			last->next = new;
+			last = new;
+		}
+	}
+}
+
+int filelistContains(char *name)
+{
+	struct nod *p;
+	for(p = first; p != NULL; p = p->next)
+	{
+		if(strcmp(p->name,name) == 0)
+			return 1;
+	}
 	return 0;
 }
