@@ -10,15 +10,25 @@
 
 int set_addr(struct sockaddr_in * addr, char *name, u_int32_t inaddr, short sin_port) {
   
-	struct hostent *h;
-  
+	struct addrinfo hints;
+	struct addrinfo *res;
+  	
 	memset((void *)addr,0,sizeof(*addr));
 	addr->sin_family = AF_INET;
 	if(name != NULL) {
-		h = gethostbyname(name);
-		if(h == NULL)
+		
+		memset(&hints, 0, sizeof(hints));
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_protocol = IPPROTO_TCP;
+		hints.ai_flags = AI_CANONNAME;
+		
+		if(getaddrinfo(name, NULL, &hints, &res))
 			return -1;
-		addr->sin_addr.s_addr = *(u_int32_t *)h->h_addr_list[0];
+		if(res == NULL)
+			return -1;
+		addr->sin_addr.s_addr = ((struct sockaddr_in *) res->ai_addr)->sin_addr.s_addr;
+		freeaddrinfo(res);
 	} else
 		addr->sin_addr.s_addr = htonl(inaddr);
 	addr->sin_port = htons(sin_port);
