@@ -8,8 +8,6 @@
 
 #include "netio.h"
 
-#define BUFSIZE 1024
-
 int set_addr(struct sockaddr_in * addr, char *name, u_int32_t inaddr, short sin_port) {
   
 	struct hostent *h;
@@ -55,36 +53,4 @@ int stream_write(int sockfd,void *buf,int len) {
 		buf += nwr;
 	}
 	return len - remaining;
-}
-
-int set_data(char buf[1024], char data[1017], int flag)
-{
-
-	int i;
-	memset(buf,'\0',BUFSIZE);
-	switch(flag)
-	{	
-		//ACK
-		case 0: sprintf(buf, "%c%c", '0', '0');
-			break;
-		//NACK
-		case 1: sprintf(buf, "%c%c", '0', '0');
-			break;
-		//FILENAME
-		case 2: snprintf(buf, 3, "%c%c", '0', '1');
-                        snprintf(&buf[2], 5, "%.4d", strlen(data));
-                        snprintf(&buf[6], strlen(data)+1, "%s", data);
-                        break;
-		//DATA
-		case 3: //printf("\n%s\n",data);
-			snprintf(buf, 3, "%c%c", '1', '0');
-			//snprintf(&buf[2], 5, "%.4d", sizeof(data));
-			snprintf(&buf[2], strlen(data)+1, "%s", data);
-			break;
-		//SYNC COMPLETE
-		case 4: sprintf(buf, "%c%c", '1', '1');
-			break;
-		default: return -1;
-	}
-	return flag;
 }
