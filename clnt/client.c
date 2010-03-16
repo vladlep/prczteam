@@ -25,6 +25,7 @@
 
 #define FILENAME_LENGTH 4
 
+#define WAIT_TIME 10
 #define BUFSIZE 1024
 #define TREE "tree.txt"
 
@@ -128,8 +129,8 @@ int startConnection(char *server_address, int server_port)
 		case 0: break;
 		case -1: printf("\nAn error occurred while trying to receive the file-tree\n");
 			return -1;
-		case 1: printf("\nRetrying in 10 seconds\n");
-			sleep(10);
+		case 1: printf("\nRetrying in %d seconds\n", WAIT_TIME);
+			sleep(WAIT_TIME);
 			startConnection(server_address, server_port);
 			break;
 	}
@@ -427,22 +428,18 @@ int removeOldFiles(char path[])
 			strcpy(name, new_path + strlen(home_dir) + 1);
 			if( S_ISDIR(st_buf.st_mode) && strcmp(drnt->d_name,".") && strcmp(drnt->d_name,"..") )
 			{	
-				if( filelistContains(name) )
-				{	
-					removeOldFiles(new_path);
-				} else
+				if( removeOldFiles(new_path) == -1)
 				{
-					int pidd;
-					pidd = vfork();
-					switch(pidd)
+					return -1;
+				}
+				if( !filelistContains(name) )
+				{
+					if( rmdir(new_path) == -1)
 					{
-					case -1: printf("\nFork Error\n");
+						printf("\nCould not remove directory %s\n", name);
 						return -1;
-					case 0: execlp("rm", "remove", "-r", new_path, (char*)0);
-						exit(0);
-					default: wait(&status);
-						printf("\nRemoved directory %s\n", name);
 					}
+					printf("\nRemoved directory %s\n", name);
 				}
 			}
 	
@@ -450,17 +447,14 @@ int removeOldFiles(char path[])
 			{	
 				if( !filelistContains(name) )
 				{
-					int pidf;
-					pidf= vfork();
-					switch(pidf)
+					if( unlink(new_path) == -1 )
 					{
-					case -1: printf("\nFork Error\n");
+						printf("\nCould not remove file %s\n", name);
 						return -1;
-					case 0: execlp("rm", "remove", new_path, (char*)0);
-						exit(0);
-					default: wait(&status);
-						if(strcmp(name, TREE))
-							printf("\nRemoved file %s\n", name);
+					}
+					if( strcmp(name, TREE) )
+					{
+						printf("\nRemoved file %s\n", name);
 					}
 				}
 			}
