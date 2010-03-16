@@ -252,18 +252,27 @@ int update(int sockfd)
 		char *str[4];
         	char *aux = (char*)malloc(strlen(line)*sizeof(char) + 1);
 
+		if( aux == NULL )
+		{
+			printf("\nError alocating memory\n");
+			if( fclose(f) )
+			{
+				printf("\nError closing file %s\n", TREE);
+				return -1;
+			}
+			return -1;
+		}
         	strcpy(aux,line);
         	do
         	{
                 	str[i++] = strsep(&aux,":");
                 	
         	}while(aux != NULL);
-		
 		type = str[0][0];
 		strcpy(name,str[1]);
 		size = atoi(str[2]);
 		time = atoi(str[3]);
-
+		
 		filelistAdd(name);
 
 		if( stat(name,&st_buf) == -1)
@@ -275,6 +284,11 @@ int update(int sockfd)
 					if( mkdir(name, 0777) == -1)
 					{
 						printf("\nCould not make directory %s\n", name);
+						if( fclose(f) )
+						{
+							printf("\nError closing file %s\n", TREE);
+							return -1;
+						}
 						return -1;
 					}
 					
@@ -293,6 +307,11 @@ int update(int sockfd)
 						if( receiveFile(sockfd, name, size, O_CREAT | O_TRUNC | O_WRONLY) == -1)
 						{
 							printf("\nAn error occurred while receiving file %s\n", name);
+							if( fclose(f) )
+							{
+								printf("\nError closing file %s\n", TREE);
+								return -1;
+							}
 							return -1;
 						}
 
@@ -301,6 +320,11 @@ int update(int sockfd)
 						if( utime(name, &ut_buf) == -1)
 						{
 							printf("\nCould not update last modified time for file %s\n", name);
+							if( fclose(f) )
+							{
+								printf("\nError closing file %s\n", TREE);
+								return -1;
+							}
 							return -1;
 						}
 						
@@ -321,6 +345,11 @@ int update(int sockfd)
                                 if( receiveFile(sockfd, name, size, O_TRUNC | O_WRONLY) == -1)
 				{
 					printf("\nAn error occurred while receiving file %s\n", name);
+					if( fclose(f) )
+					{
+						printf("\nError closing file %s\n", TREE);
+						return -1;
+					}
 					return -1;
 				}
 
@@ -329,6 +358,11 @@ int update(int sockfd)
                                 if( utime(name, &ut_buf) == -1)
 				{
 					printf("\nCould not update last modified time for file %s\n", name);
+					if( fclose(f) )
+					{
+						printf("\nError closing file %s\n", TREE);
+						return -1;
+					}
 					return -1;
 				}
 
@@ -378,12 +412,22 @@ int receiveFile(int sockfd, char *name, int size, int mask)
 	if( nread < 0 )
         {
         	printf("\nRead error from socket\n");
+		if(close(fd) < 0)
+        	{
+        		printf("\nCould not close file %s\n", name);
+                	return -1;
+        	}
                 return -1;
         }
 
 	if( size != 0 )
 	{
 		printf("\nSize error for file %s\n", name);
+		if(close(fd) < 0)
+        	{
+        		printf("\nCould not close file %s\n", name);
+                	return -1;
+        	}
 		return -1;
 	}
 
@@ -422,6 +466,11 @@ int removeOldFiles(char path[])
 		if( stat(new_path,&st_buf) == -1)
 		{
 			printf("\nStat error for %s\n", new_path);
+			if( closedir(wdir) == -1 )
+			{
+				printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+				return -1;
+			}
 			return -1;
 		} else
 		{
@@ -437,6 +486,11 @@ int removeOldFiles(char path[])
 					if( rmdir(new_path) == -1)
 					{
 						printf("\nCould not remove directory %s\n", name);
+						if( closedir(wdir) == -1 )
+						{
+							printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+							return -1;
+						}
 						return -1;
 					}
 					printf("\nRemoved directory %s\n", name);
@@ -450,6 +504,11 @@ int removeOldFiles(char path[])
 					if( unlink(new_path) == -1 )
 					{
 						printf("\nCould not remove file %s\n", name);
+						if( closedir(wdir) == -1 )
+						{
+							printf("\nError closing directory %s", path + strlen(home_dir) + 1);
+							return -1;
+						}
 						return -1;
 					}
 					if( strcmp(name, TREE) )
@@ -467,9 +526,21 @@ int removeOldFiles(char path[])
 void filelistAdd(char *name)
 {
 	file_entry *new_entry;
-
+	
 	new_entry  = (file_entry *)malloc(sizeof(file_entry));
+	if(new_entry == NULL)
+	{
+		printf("\nError allocating memory\n");
+		exit(1);
+	}
+	
 	new_entry->name = (char *)malloc(strlen(name)*sizeof(char) + 1);
+	if(new_entry->name == NULL)
+	{
+		printf("\nError allocating memory\n");
+		exit(1);
+	}
+	
 	strcpy(new_entry->name, name);
 	new_entry->next = NULL;
 	if(last == NULL)
